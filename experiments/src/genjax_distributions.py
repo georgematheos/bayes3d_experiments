@@ -62,17 +62,39 @@ class UniformDiscreteArray(ExactDensity, JAXGenerativeFunction):
     def logpdf(self, sampled_val, vals, arr, **kwargs):
         return jnp.log(1.0 / (vals.shape[0])) * arr.shape[0]
 
-class UniformDiscrete(ExactDensity, JAXGenerativeFunction):
+class UniformChoice(ExactDensity, JAXGenerativeFunction):
     def sample(self, key, vals):
         return jax.random.choice(key, vals)
 
     def logpdf(self, sampled_val, vals, **kwargs):
-        return jnp.log(1.0 / (vals.shape[0]))
+        valid = jnp.isin(sampled_val, vals)
+        log_probs = jnp.where(valid, -jnp.log(vals.shape[0]), -jnp.inf)
+        return log_probs
 
+class UniformDiscrete(ExactDensity, JAXGenerativeFunction):
+    """
+    uniform_discrete(a, b) samples a uniform integer x such that a <= x < b.
+    If a is not less than b, the result is always a.
+    """
+    def sample(self, key, low, high):
+        return jax.random.randint(key, shape=(), minval=low, maxval=high)
+
+    def logpdf(self, sampled_val, low, high, **kwargs):
+        range_is_nontrivial = low + 1 <= high
+        equals_low = low == sampled_val
+    
+        is_in_range = (low <= sampled_val) & (sampled_val < high)
+
+        log_probs_branch1 = jnp.where(equals_low, 0., -jnp.inf)
+        log_probs_branch2 = jnp.where(is_in_range, -jnp.log(high - low), -jnp.inf)
+        log_probs = jnp.where(range_is_nontrivial, log_probs_branch2, log_probs_branch1)
+
+        return log_probs
 
 gaussian_vmf_pose = GaussianVMFPose()
 image_likelihood = ImageLikelihood()
 contact_params_uniform = ContactParamsUniform()
 uniform_discrete = UniformDiscrete()
+uniform_choice = UniformChoice()
 uniform_discrete_array = UniformDiscreteArray()
 uniform_pose = UniformPose()

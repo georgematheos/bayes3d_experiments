@@ -9,7 +9,7 @@ import bayes3d as b
 from .genjax_distributions import (
     contact_params_uniform,
     image_likelihood,
-    uniform_discrete,
+    uniform_choice,
     uniform_pose,
 )
 
@@ -29,11 +29,11 @@ def model(
     parents = jnp.array([], dtype=jnp.int32)
     for i in range(n_obj_array.shape[0]):
         parent_obj = (
-            uniform_discrete(jnp.arange(-1, n_obj_array.shape[0] - 1)) @ f"parent_{i}"
+            uniform_choice(jnp.arange(-1, n_obj_array.shape[0] - 1)) @ f"parent_{i}"
         )
-        parent_face = uniform_discrete(jnp.arange(0, 6)) @ f"face_parent_{i}"
-        child_face = uniform_discrete(jnp.arange(0, 6)) @ f"face_child_{i}"
-        index = uniform_discrete(possible_object_indices) @ f"id_{i}"
+        parent_face = uniform_choice(jnp.arange(0, 6)) @ f"face_parent_{i}"
+        child_face = uniform_choice(jnp.arange(0, 6)) @ f"face_child_{i}"
+        index = uniform_choice(possible_object_indices) @ f"id_{i}"
 
         pose = (
             uniform_pose(
