@@ -13,6 +13,17 @@ from .genjax_distributions import (
     uniform_pose,
 )
 
+ModelOutput = namedtuple("ModelOutput", [
+        "rendered",
+        "indices",
+        "poses",
+        "parents",
+        "contact_params",
+        "faces_parents",
+        "faces_child",
+        "root_poses",
+    ])
+
 @genjax.static_gen_fn
 def model(
     n_obj_array,             # Array of length = num objects in the scene
@@ -73,17 +84,6 @@ def model(
     variance = genjax.uniform(0.00000000001, 10000.0) @ "variance"
     outlier_prob = genjax.uniform(-0.01, 10000.0) @ "outlier_prob"
     _image = image_likelihood(rendered, variance, outlier_prob) @ "image"
-    
-    ModelOutput = namedtuple("ModelOutput", [
-        "rendered",
-        "indices",
-        "poses",
-        "parents",
-        "contact_params",
-        "faces_parents",
-        "faces_child",
-        "root_poses",
-    ])
 
     return ModelOutput(
         rendered,

@@ -43,10 +43,10 @@ def generate_object(
     contact_bounds
 ):
     i = object_idx
-    parent_obj = uniform_discrete(-1, object_idx) @ f"parent_{i}"
-    parent_face = uniform_discrete(0, 6) @ f"face_parent_{i}"
-    child_face = uniform_discrete(0, 6) @ f"face_child_{i}"
-    category_index = uniform_choice(possible_category_indices) @ f"category_{i}"
+    parent_obj = uniform_discrete(-1, object_idx) @ f"parent_obj"
+    parent_face = uniform_discrete(0, 6) @ f"face_parent"
+    child_face = uniform_discrete(0, 6) @ f"face_child"
+    category_index = uniform_choice(possible_category_indices) @ f"category_index"
     
     # TODO: use mask or switch so we only generate whichever of `pose` and `params`
     # is necessary for the current object.
@@ -55,11 +55,11 @@ def generate_object(
                 pose_bounds[0],
                 pose_bounds[1],
             )
-            @ f"root_pose_{i}"
+            @ f"root_pose"
         )
     params = (
         contact_params_uniform(contact_bounds[0], contact_bounds[1])
-        @ f"contact_params_{i}"
+        @ f"contact_params"
     )
 
     return ObjectInfo(parent_obj, parent_face, child_face, category_index, pose, params)
@@ -88,9 +88,11 @@ ModelOutput = namedtuple("ModelOutput", [
     "faces_child",
     "root_poses",
 ])
+
+@genjax.static_gen_fn
 def model(
-    max_n_objects, # Should be a const
-    n_objects, # Can be dynamic
+    max_n_objects : genjax.PytreeConst,
+    n_objects : int,
     possible_object_indices,
     pose_bounds,
     contact_bounds,
@@ -101,12 +103,12 @@ def model(
     # It stores this by storing each value in `ObjectInfo` as
     # an array with leading dimension of size max_n_objects
     masked_object_info = generate_objects(
-        jnp.arange(max_n_objects) < n_objects,
+        jnp.arange(max_n_objects.const) < n_objects,
         (
-            jnp.arange(max_n_objects),
-            jnp.tile(possible_object_indices, (max_n_objects, 1)),
-            jnp.tile(pose_bounds, (max_n_objects, 1)),
-            jnp.tile(contact_bounds, (max_n_objects, 1)),
+            jnp.arange(max_n_objects.const),
+            jnp.repeat(possible_object_indices[None, ...], max_n_objects.const, 0),
+            jnp.repeat(pose_bounds[None, ...], max_n_objects.const, 0),
+            jnp.repeat(contact_bounds[None, ...], max_n_objects.const, 0),
         )
     ) @ "objects"
     object_info = mymatch(
@@ -121,10 +123,10 @@ def model(
     ) @ "camera_pose"
 
     valid_box_dims = jnp.where(
-            object_info.category_index == -1,
-            jnp.zeros((3,)),
-            all_box_dims[object_info.category_index]
-        )
+        (object_info.category_index == -1)[:, None],
+        jnp.zeros(3),
+        all_box_dims[object_info.category_index]
+    )
     poses = b.scene_graph.poses_from_scene_graph(
         object_info.pose,
         valid_box_dims,
@@ -132,15 +134,18 @@ def model(
         object_info.parent_face, object_info.child_face
     )
 
-    rendered = b.RENDERER.render(jnp.linalg.inv(camera_pose) @ poses, object_info.index)[..., :3]
+    rendered = b.RENDERER.render(jnp.linalg.inv(camera_pose) @ poses, object_info.category_index)[..., :3]
+    print("Got rendered.")
+    print(rendered)
 
     variance = genjax.uniform(0.00000000001, 10000.0) @ "variance"
     outlier_prob = genjax.uniform(-0.01, 10000.0) @ "outlier_prob"
     noisy_image = image_likelihood(rendered, variance, outlier_prob) @ "image"
+    print("Got noisy image.")
 
     return ModelOutput(
         rendered,
-        object_info.index,
+        object_info.category_index,
         poses,
         object_info.parent_obj,
         object_info.params,
