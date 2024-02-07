@@ -14,7 +14,10 @@ from .genjax_distributions import (
     uniform_pose,
 )
 
-ObjectInfo = namedtuple("ObjectInfo", ["parent_obj", "parent_face", "child_face", "category_index", "pose", "params"])
+ObjectInfo = namedtuple("ObjectInfo", [
+    "parent_obj", "parent_face", "child_face",
+    "category_index", "root_pose", "params"
+])
 def empty_object_info():
     """
     Placeholder ObjectInfo for a nonexistant object.
@@ -22,18 +25,18 @@ def empty_object_info():
     memory layout of an ObjectInfo.)
     """
     return ObjectInfo(
-        jnp.array(-1),
-        jnp.array(-1),
-        jnp.array(-1),
-        jnp.array(-1),
-        jnp.nan * jnp.zeros((4, 4)),
-        jnp.nan * jnp.zeros(3)
+        jnp.array(-1000),
+        jnp.array(-1000),
+        jnp.array(-1000),
+        jnp.array(-1000),
+        jnp.zeros((4, 4)),
+        -10000 * jnp.ones(3)
     )
 def is_valid(obj: ObjectInfo):
     """
     Check if an object is valid (i.e. exists).
     """
-    return obj.category_index != -1
+    return obj.category_index >= -1
 
 @genjax.static_gen_fn
 def generate_object(
@@ -43,14 +46,16 @@ def generate_object(
     contact_bounds
 ):
     i = object_idx
-    parent_obj = uniform_discrete(-1, object_idx) @ f"parent_obj"
+    # parent_obj = uniform_discrete(-1, object_idx) @ f"parent_obj"
+    min = jax.lax.select(i == 0, -1, 0) # only allow floating first object
+    parent_obj = uniform_discrete(min, object_idx) @ f"parent_obj"
     parent_face = uniform_discrete(0, 6) @ f"face_parent"
     child_face = uniform_discrete(0, 6) @ f"face_child"
     category_index = uniform_choice(possible_category_indices) @ f"category_index"
     
     # TODO: use mask or switch so we only generate whichever of `pose` and `params`
     # is necessary for the current object.
-    pose = (
+    root_pose = (
             uniform_pose(
                 pose_bounds[0],
                 pose_bounds[1],
@@ -62,7 +67,7 @@ def generate_object(
         @ f"contact_params"
     )
 
-    return ObjectInfo(parent_obj, parent_face, child_face, category_index, pose, params)
+    return ObjectInfo(parent_obj, parent_face, child_face, category_index, root_pose, params)
 
 """
 Args:
@@ -80,13 +85,9 @@ generate_objects = genjax.map_combinator(
 
 ModelOutput = namedtuple("ModelOutput", [
     "rendered",
-    "indices",
-    "poses",
-    "parents",
-    "contact_params",
-    "faces_parents",
-    "faces_child",
-    "root_poses",
+    "n_objects",
+    "object_info", # Vectorized ObjectInfo - exactly the first n_objects are valid
+    "poses"
 ])
 
 @genjax.static_gen_fn
@@ -123,16 +124,26 @@ def model(
     ) @ "camera_pose"
 
     valid_box_dims = jnp.where(
-        (object_info.category_index == -1)[:, None],
-        jnp.zeros(3),
-        all_box_dims[object_info.category_index]
+        is_valid(object_info)[:, None],
+        all_box_dims[object_info.category_index],
+        jnp.zeros(3)
     )
-    poses = b.scene_graph.poses_from_scene_graph(
-        object_info.pose,
-        valid_box_dims,
-        object_info.parent_obj, object_info.params,
-        object_info.parent_face, object_info.child_face
+    poses = jnp.where(
+        is_valid(object_info)[:, None, None],
+        b.scene_graph.poses_from_scene_graph(
+            object_info.root_pose,
+            valid_box_dims,
+            object_info.parent_obj, object_info.params,
+            object_info.parent_face, object_info.child_face
+        ),
+        jnp.zeros((max_n_objects.const, 4, 4))
     )
+    # b.scene_graph.poses_from_scene_graph(
+    #     object_info.root_pose,
+    #     valid_box_dims,
+    #     object_info.parent_obj, object_info.params,
+    #     object_info.parent_face, object_info.child_face
+    # )
 
     rendered = b.RENDERER.render(jnp.linalg.inv(camera_pose) @ poses, object_info.category_index)[..., :3]
     print("Got rendered.")
@@ -143,37 +154,39 @@ def model(
     noisy_image = image_likelihood(rendered, variance, outlier_prob) @ "image"
     print("Got noisy image.")
 
-    return ModelOutput(
-        rendered,
-        object_info.category_index,
-        poses,
-        object_info.parent_obj,
-        object_info.params,
-        object_info.parent_face,
-        object_info.child_face,
-        object_info.pose,
-    )
+    return ModelOutput(rendered, n_objects, object_info, poses)
+    # return ModelOutput(
+    #     rendered,
+    #     object_info.category_index,
+    #     poses,
+    #     object_info.parent_obj,
+    #     object_info.params,
+    #     object_info.parent_face,
+    #     object_info.child_face,
+    #     object_info.pose,
+    # )
 
 ### Utils ###
 
 def viz_trace_meshcat(trace, colors=None):
+    out = trace.get_retval()
     b.clear_visualizer()
     b.show_cloud(
-        "1", b.apply_transform_jit(trace["image"].reshape(-1, 3), trace["camera_pose"])
+        "noisy_image", b.apply_transform_jit(trace["image"].reshape(-1, 3), trace["camera_pose"])
     )
     b.show_cloud(
-        "2",
+        "rendered_image",
         b.apply_transform_jit(
-            trace.get_retval().rendered.reshape(-1, 3), trace["camera_pose"]
+            out.rendered.reshape(-1, 3), trace["camera_pose"]
         ),
         color=b.RED,
     )
-    indices = trace.get_retval().indices
+    indices = out.object_info.category_index
     if colors is None:
         colors = b.viz.distinct_colors(max(10, len(indices)))
-    for i in range(len(indices)):
+    for i in range(out.n_objects):
         b.show_trimesh(f"obj_{i}", b.RENDERER.meshes[indices[i]], color=colors[i])
-        b.set_pose(f"obj_{i}", trace.get_retval().poses[i])
+        b.set_pose(f"obj_{i}", out.poses[i])
     b.show_pose("camera_pose", trace["camera_pose"])
 
 def viz_trace_rendered_observed(trace, scale=2):
