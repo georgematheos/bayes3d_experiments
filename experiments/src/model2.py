@@ -91,7 +91,7 @@ ModelOutput = namedtuple("ModelOutput", [
 ])
 
 def call_renderer(*args):
-    print("Calling renderer...")
+    # print("Calling renderer...")
     return b.RENDERER.render(*args)
 
 @genjax.static_gen_fn
