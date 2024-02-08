@@ -90,26 +90,31 @@ ModelOutput = namedtuple("ModelOutput", [
     "poses"
 ])
 
+def call_renderer(*args):
+    print("Calling renderer...")
+    return b.RENDERER.render(*args)
+
 @genjax.static_gen_fn
 def model(
-    max_n_objects : genjax.PytreeConst,
+    max_n_objects_array, # array with shape[0] = max n objects
     n_objects : int,
     possible_object_indices,
     pose_bounds,
     contact_bounds,
     all_box_dims
 ):
+    max_n_objects = max_n_objects_array.shape[0]
     # This gives us a masked `object_info : ObjectInfo`
     # storing n real objects and (max_n_objects - n) empty objects.
     # It stores this by storing each value in `ObjectInfo` as
     # an array with leading dimension of size max_n_objects
     masked_object_info = generate_objects(
-        jnp.arange(max_n_objects.const) < n_objects,
+        jnp.arange(max_n_objects) < n_objects,
         (
-            jnp.arange(max_n_objects.const),
-            jnp.repeat(possible_object_indices[None, ...], max_n_objects.const, 0),
-            jnp.repeat(pose_bounds[None, ...], max_n_objects.const, 0),
-            jnp.repeat(contact_bounds[None, ...], max_n_objects.const, 0),
+            jnp.arange(max_n_objects),
+            jnp.repeat(possible_object_indices[None, ...], max_n_objects, 0),
+            jnp.repeat(pose_bounds[None, ...], max_n_objects, 0),
+            jnp.repeat(contact_bounds[None, ...], max_n_objects, 0),
         )
     ) @ "objects"
     object_info = mymatch(
@@ -136,35 +141,16 @@ def model(
             object_info.parent_obj, object_info.params,
             object_info.parent_face, object_info.child_face
         ),
-        jnp.zeros((max_n_objects.const, 4, 4))
+        jnp.zeros((max_n_objects, 4, 4))
     )
-    # b.scene_graph.poses_from_scene_graph(
-    #     object_info.root_pose,
-    #     valid_box_dims,
-    #     object_info.parent_obj, object_info.params,
-    #     object_info.parent_face, object_info.child_face
-    # )
 
-    rendered = b.RENDERER.render(jnp.linalg.inv(camera_pose) @ poses, object_info.category_index)[..., :3]
-    print("Got rendered.")
-    print(rendered)
-
+    rendered = call_renderer(jnp.linalg.inv(camera_pose) @ poses, object_info.category_index)[..., :3]\
+    
     variance = genjax.uniform(0.00000000001, 10000.0) @ "variance"
     outlier_prob = genjax.uniform(-0.01, 10000.0) @ "outlier_prob"
     noisy_image = image_likelihood(rendered, variance, outlier_prob) @ "image"
-    print("Got noisy image.")
 
     return ModelOutput(rendered, n_objects, object_info, poses)
-    # return ModelOutput(
-    #     rendered,
-    #     object_info.category_index,
-    #     poses,
-    #     object_info.parent_obj,
-    #     object_info.params,
-    #     object_info.parent_face,
-    #     object_info.child_face,
-    #     object_info.pose,
-    # )
 
 ### Utils ###
 
@@ -172,7 +158,10 @@ def viz_trace_meshcat(trace, colors=None):
     out = trace.get_retval()
     b.clear_visualizer()
     b.show_cloud(
-        "noisy_image", b.apply_transform_jit(trace["image"].reshape(-1, 3), trace["camera_pose"])
+        "noisy_image",
+        b.apply_transform_jit(trace["image"].reshape(-1, 3),
+                              trace["camera_pose"]
+                            )
     )
     b.show_cloud(
         "rendered_image",
@@ -198,22 +187,3 @@ def viz_trace_rendered_observed(trace, scale=2):
             b.viz.scale_image(b.get_depth_image(trace["image"][..., 2]), scale),
         ]
     )
-
-### Scratch work ###
-
-# mymatch(object_info,
-#     lambda: jnp.nan * jnp.ones((4, 4)),
-#     lambda x : b.scene_graph.poses_from_scene_graph(
-#         x.pose, all_box_dims[x.category_index], x.parent_obj,
-#         x.params, x.parent_face, x.child_face
-#     )               
-# )
-
-# poses = b.scene_graph.poses_from_scene_graph(
-#     mymatch(object_info, lambda: jnp.zeros((4, 4)), lambda x: x.pose),
-#     mymatch(object_info, lambda: jnp.zeros((3,)), lambda x: all_box_dims[x.category_index]),
-#     mymatch(object_info, lambda: jnp.array(-1), lambda x: x.parent_obj),
-#     mymatch(object_info, lambda: jnp.array(-1), lambda x: x.params),
-#     mymatch(object_info, lambda: jnp.array(-1), lambda x: x.parent_face),
-#     mymatch(object_info, lambda: jnp.array(-1), lambda x: x.child_face)
-# )
