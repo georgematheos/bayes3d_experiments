@@ -27,6 +27,31 @@ def get_nice_table_pose():
     X_CT = b.t3d.inverse_pose(X_WC) @ X_WT
     return X_CT
 
+def image_to_rgbd(camera_image_1):
+    K = camera_image_1['camera_matrix']
+    rgb = camera_image_1['rgbPixels']
+    depth = camera_image_1['depthPixels']
+    camera_pose = camera_image_1['camera_pose']
+    camera_pose = b.t3d.pybullet_pose_to_transform(camera_pose)
+    fx, fy, cx, cy = K[0,0],K[1,1],K[0,2],K[1,2]
+    h,w = depth.shape                                                          # NEAR,  FAR
+    rgbd_original = b.RGBD(rgb, depth, camera_pose, b.Intrinsics(h,w,fx,fy,cx,cy, 0.1, 5.0))
+    return rgbd_original
+
+def load_pybullet_obs_img():
+    with open('../data.pkl', 'rb') as f:
+        data = pickle.load(f)
+    camera_image_1 = data["init"][0]
+
+    rgbd_original = image_to_rgbd(camera_image_1)
+    print("Got rgbd_original")
+
+    scaling_factor = 0.2
+    rgbd_scaled_down = b.RGBD.scale_rgbd(rgbd_original, scaling_factor)
+    print("Got rgb immage scaled down.")
+
+    return (rgbd_original, rgbd_scaled_down)
+
 def load_some_object_meshes(override=False):
     if len(b.RENDERER.meshes) > 0 and not override:
         print("Meshes already loaded.  Use override=True to add more meshes anyway.")
