@@ -13,3 +13,8 @@ For visitors, I recommend looking at:
     and demonstrates it by fitting two synthetic scenes, one of several YCB objects
     on a table (this scene comes from a pybullet environment), and one consisting
     of several cubes stacked atop each other.
+
+These notebooks are both pretty clean and contain walkthroughs of the code.
+The code in [experiments/src](experiments/src) is also relatively clean and well-documented
+(as of 2024-02-09).
+The other notebooks in [experiments](experiments) are not very clean; I was using them for R&D.
