@@ -12,7 +12,7 @@ import bayes3d as b
 import genjax
 import matplotlib.pyplot as plt
 
-from src.model3 import model
+from src.model import model
 
 # TODO for those extending this unit test:
 # We really ought to run this test N times,
